@@ -1,22 +1,76 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, BackgroundTasks
 from fastapi.responses import HTMLResponse
 import sqlite3
-import datetime
+from datetime import datetime, timedelta
 import os
+from contextlib import asynccontextmanager
+import time
+from threading import Thread, Event
+import uvicorn
 
 
 UPLOAD_FOLDER = "uploads"
+DB_FILE = "test.db"
 
 
 app = FastAPI()
+app_stop_event = Event()
 
 
 def get_db():
-    db = sqlite3.connect("test.db")
+    db = sqlite3.connect(DB_FILE)
     try:
         yield db
     finally:
         db.close()
+
+
+class BackgroundTasks(Thread):
+    def __init__(self):
+        super().__init__(daemon=True)
+
+
+    def run(self,*args,**kwargs):
+        # Main loop
+        while not app_stop_event.is_set():
+            # Sleep
+            time.sleep(60)
+
+            # Get db and cursor
+            db = sqlite3.connect(DB_FILE)
+            db_cursor = db.cursor()
+
+            # Check session timeout
+            db_cursor.execute("SELECT id, start_time FROM session;")
+            for session_id, start_time_str in db_cursor.fetchall():
+                start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+                if datetime.now() - start_time > timedelta(minutes=15):
+                    db_cursor.execute(f"DELETE FROM session WHERE id = {session_id};")
+            db.commit()
+
+            # Delete files without valid session
+            db_cursor.execute(
+""" SELECT file.id, file.name
+        FROM file LEFT JOIN session ON file.session_id = session.id
+        WHERE file.session_id IS NULL OR session.id IS NULL;""")
+            for file_id, filename in db_cursor.fetchall():
+                # Delete file on disk
+                filepath = os.path.join(UPLOAD_FOLDER, f"{file_id}_{filename}")
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                # Delete file reference from database
+                db_cursor.execute(f"DELETE FROM file WHERE id = {file_id};")
+            db.commit()
+
+            # Delete all files that are not reference in database
+            db_cursor.execute("SELECT id, name FROM file;")
+            filenames = [f"{file_id}_{filename}" for file_id, filename in db_cursor.fetchall()]
+            for filename in os.listdir(UPLOAD_FOLDER):
+                if filename not in filenames:
+                    os.remove(filename)
+
+            # Close db
+            db.close()
 
 
 def table_exists(db_cursor, table_name):
@@ -47,7 +101,7 @@ def create_session(db = Depends(get_db)):
         db.commit()
     
     # Parse current time as str
-    start_time_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Insert new session
     db_cursor.execute(f"INSERT INTO session (start_time) VALUES ('{start_time_str}');")
@@ -55,9 +109,11 @@ def create_session(db = Depends(get_db)):
     session_id = db_cursor.lastrowid
     if session_id is None:
         db.rollback()
+        db.close()
         raise HTTPException(status_code=400, detail="Failed to create session")
 
     # Success, return session id
+    db.close()
     return {"session_id": session_id}
 
 
@@ -71,23 +127,13 @@ def upload_file(file: UploadFile, db = Depends(get_db)):
     # Check if file is a pdf
     filename = file.filename
     if not filename.endswith(".pdf"):
+        db.close()
         raise HTTPException(status_code=400, detail="File must end with .pdf")
 
     # Check file size wether file size is over 256 MB
     if file.size > 1024 * 1024 * 256:
+        db.close()
         raise HTTPException(status_code=400, detail="File size must be less than 256 MB")
-
-    # Store file
-    if not os.path.exists(UPLOAD_FOLDER):
-        os.makedirs(UPLOAD_FOLDER)
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    file.seek(0)
-    with open(filepath, "wb") as os_file:
-        os_file.write(file.file.read())
-
-    # Verify if the file was written successfully
-    if not os.path.exists(filepath):
-        raise HTTPException(status_code=500, detail="Failed to write file to disk")
 
     # Check if file table exists
     db_cursor = db.cursor()
@@ -101,7 +147,28 @@ def upload_file(file: UploadFile, db = Depends(get_db)):
     file_id = db_cursor.lastrowid
     if file_id is None:
         db.rollback()
+        db.close()
         raise HTTPException(status_code=500, detail="Failed to store file meta data in database")
 
+    # Store file
+    if not os.path.exists(UPLOAD_FOLDER):
+        os.makedirs(UPLOAD_FOLDER)
+    filepath = os.path.join(UPLOAD_FOLDER, f"{file_id}_{filename}")
+    with open(filepath, "wb") as os_file:
+        os_file.write(file.file.read())
+
+    # Verify if the file was written successfully
+    if not os.path.exists(filepath):
+        db.close()
+        raise HTTPException(status_code=500, detail="Failed to write file to disk")
+
     # Success,
+    db.close()
     return {"filename": file.filename}
+
+
+if __name__ == "__main__":
+    bg_task = BackgroundTasks()
+    bg_task.start()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+    app_stop_event.set()
