@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
 from fastapi.responses import HTMLResponse
 import sqlite3
 import datetime
@@ -33,7 +33,7 @@ def root():
 """)
 
 
-@app.post("/session")
+@app.post("/api/session")
 def create_session(db = Depends(get_db)):
     # Check wether session table exists
     db_cursor = db.cursor()
@@ -55,3 +55,15 @@ def create_session(db = Depends(get_db)):
 
     # Success, return session id
     return {"session_id": session_id}
+
+
+@app.post("/api/upload")
+def upload_file(file: UploadFile, db = Depends(get_db)):
+    # Check wether file table exists
+    db_cursor = db.cursor()
+    if not table_exists(db_cursor, "file"):
+        db_cursor.execute("CREATE TABLE file (id INTEGER PRIMARY KEY, session_id INTEGER, name TEXT);")
+        db.commit()
+
+    # Success,
+    return {"filename": file.filename}
