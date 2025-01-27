@@ -7,10 +7,7 @@ from contextlib import asynccontextmanager
 import time
 from threading import Thread, Event
 import uvicorn
-
-
-UPLOAD_FOLDER = "uploads"
-DB_FILE = "test.db"
+from utils import table_exists, UPLOAD_FOLDER, DB_FILE
 
 
 app = FastAPI()
@@ -71,11 +68,6 @@ class BackgroundTasks(Thread):
 
             # Close db
             db.close()
-
-
-def table_exists(db_cursor, table_name):
-    db_cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}';")
-    return db_cursor.fetchone() is not None
 
 
 @app.get("/")
