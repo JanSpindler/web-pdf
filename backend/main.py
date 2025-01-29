@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, BackgroundTasks, Response, Cookie
 from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 from datetime import datetime, timedelta
 import os
@@ -15,8 +16,17 @@ app = FastAPI()
 app_stop_event = Event()
 
 
+# TODO: Change for production
+app.add_middleware(
+    CORSMiddleware, 
+    allow_origins=["*"], 
+    allow_credentials=True, 
+    allow_methods=["*"], 
+    allow_headers=["*"])
+
+
 def get_db():
-    db = sqlite3.connect(DB_FILE)
+    db = sqlite3.connect(DB_FILE, check_same_thread=False)
     try:
         yield db
     finally:
@@ -45,6 +55,11 @@ class BackgroundTasks(Thread):
             # Get db and cursor
             db = sqlite3.connect(DB_FILE)
             db_cursor = db.cursor()
+
+            # Check if session table exists
+            if not table_exists(db_cursor, "session"):
+                db_cursor.execute("CREATE TABLE session (id INTEGER PRIMARY KEY, start_time TEXT);")
+                db.commit()
 
             # Check session timeout
             db_cursor.execute("SELECT id, start_time FROM session;")
@@ -94,8 +109,12 @@ def root():
 
 
 @app.post("/api/session")
-def create_session(db: sqlite3.Connection = Depends(get_db)):
-    # Check wether session table exists
+def create_session(session_id: str | None = Cookie(None), db: sqlite3.Connection = Depends(get_db)):
+    # Check whether session_id already exists as cookie
+    if session_id is not None:
+        return {}
+
+    # Check whether session table exists
     db_cursor = db.cursor()
     if not table_exists(db_cursor, "session"):
         db_cursor.execute("CREATE TABLE session (id INTEGER PRIMARY KEY, start_time TEXT);")

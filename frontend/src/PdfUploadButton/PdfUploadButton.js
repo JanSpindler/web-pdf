@@ -1,14 +1,12 @@
 import './PdfUploadButton.css';
 
-function PdfUploadButton() {
+export default function PdfUploadButton({ addFileName }) {
     return (
         <div>
             <form>
-                <input type="file" name="filenames" accept=".pdf" multiple />
+                <input type="file" name="filename" accept=".pdf" />
                 <input type="submit" />
             </form>
         </div>
     );
 }
-
-export default PdfUploadButton;

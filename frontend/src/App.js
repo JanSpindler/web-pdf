@@ -1,14 +1,32 @@
 import './App.css';
 import './PdfUploadButton/PdfUploadButton.js';
 import PdfUploadButton from './PdfUploadButton/PdfUploadButton.js';
+import { useQuery } from 'react-query';
+import { useState } from 'react';
 
-function App() {
+export default function App() {
+  const [fileNames, setFileNames] = useState([]);
+
+  function addFileName(fileName) {
+    setFileNames((prevFileNames) => [...prevFileNames, fileName]);
+  }
+
+  const { status } = useQuery('session', async () => {
+    await fetch('http://localhost:8000/api/session', { method: 'POST', credentials: 'include' });
+  });
+  
+  if (status === 'loading') {
+    return (
+      <div className="App">
+        <h1>Connecting...</h1>
+      </div>
+    );
+  }
+
   return (
     <div className="App">
       <h1>web-pdf</h1>
-      <PdfUploadButton />
+      <PdfUploadButton addFileName={addFileName}/>
     </div>
   );
 }
-
-export default App;
