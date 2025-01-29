@@ -27,6 +27,11 @@ export default function App() {
     <div className="App">
       <h1>web-pdf</h1>
       <PdfUploadButton addFileName={addFileName}/>
+      <ol>
+        {fileNames.map((fileName, index) => (
+          <li key={index}>{fileName}</li>
+        ))}
+      </ol>
     </div>
   );
 }
