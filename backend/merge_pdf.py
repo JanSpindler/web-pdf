@@ -5,7 +5,8 @@ import os
 
 
 # pdf_order is a list of file_ids
-def merge_pdf(db: sqlite3.Connection, pdf_order: list[int], session_id: int) -> None:
+# returns the result_id
+def merge_pdf(db: sqlite3.Connection, pdf_order: list[int], session_id: int) -> int:
     # Get db cursor
     db_cursor = db.cursor()
 
@@ -64,9 +65,13 @@ def merge_pdf(db: sqlite3.Connection, pdf_order: list[int], session_id: int) -> 
     result_file_path = f"{RESULT_FOLDER}/{result_id}.pdf"
     pdf_writer.write(result_file_path)
 
+    # Success, return result_id
+    return result_id
+
 
 # pdf_order is a list of tuples containing the file_id and page number
-def merge_pdf_pagewise(db: sqlite3.Connection, pdf_order: list[tuple[int, int]], session_id: int) -> None:
+# returns the result_id
+def merge_pdf_pagewise(db: sqlite3.Connection, pdf_order: list[tuple[int, int]], session_id: int) -> int:
     # Get db cursor
     db_cursor = db.cursor()
 
@@ -130,3 +135,6 @@ def merge_pdf_pagewise(db: sqlite3.Connection, pdf_order: list[tuple[int, int]],
     # Write result to file
     result_file_path = f"{RESULT_FOLDER}/{result_id}.pdf"
     pdf_writer.write(result_file_path)
+
+    # Success, return result_id
+    return result_id

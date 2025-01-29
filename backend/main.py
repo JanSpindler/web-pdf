@@ -1,13 +1,14 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, BackgroundTasks, Response, Cookie
 from fastapi.responses import HTMLResponse
 import sqlite3
 from datetime import datetime, timedelta
 import os
-from contextlib import asynccontextmanager
 import time
 from threading import Thread, Event
 import uvicorn
 from utils import table_exists, UPLOAD_FOLDER, DB_FILE
+from merge_pdf import merge_pdf, merge_pdf_pagewise
+from pydantic import BaseModel
 
 
 app = FastAPI()
@@ -20,6 +21,14 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+class MergeRequest(BaseModel):
+    pdf_order: list[int]
+
+
+class MergePagewiseRequest(BaseModel):
+    pdf_order: list[tuple[int, int]]
 
 
 class BackgroundTasks(Thread):
@@ -85,7 +94,7 @@ def root():
 
 
 @app.post("/api/session")
-def create_session(db = Depends(get_db)):
+def create_session(db: sqlite3.Connection = Depends(get_db)):
     # Check wether session table exists
     db_cursor = db.cursor()
     if not table_exists(db_cursor, "session"):
@@ -104,17 +113,26 @@ def create_session(db = Depends(get_db)):
         db.close()
         raise HTTPException(status_code=400, detail="Failed to create session")
 
-    # Success, return session id
+    # Success, set session id cookie
     db.close()
-    return {"session_id": session_id}
+    response = Response()
+    response.set_cookie(key="session_id", value=str(session_id))
+    return response
 
 
 @app.post("/api/upload")
-def upload_file(file: UploadFile, db = Depends(get_db)):
-    # TODO: Get session id from request
-    session_id = 1
+def upload_file(file: UploadFile, session_id: str | None = Cookie(None), db: sqlite3.Connection = Depends(get_db)):
+    # Check if session_id is None
+    if session_id is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Session id is missing")
 
-    # Check if session exists in database
+    # Check if session exists in db
+    db_cursor = db.cursor()
+    db_cursor.execute(f"SELECT id FROM session WHERE id = {session_id};")
+    if db_cursor.fetchone() is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Session does not exist")
 
     # Check if file is a pdf
     filename = file.filename
@@ -128,7 +146,6 @@ def upload_file(file: UploadFile, db = Depends(get_db)):
         raise HTTPException(status_code=400, detail="File size must be less than 256 MB")
 
     # Check if file table exists
-    db_cursor = db.cursor()
     if not table_exists(db_cursor, "file"):
         db_cursor.execute("CREATE TABLE file (id INTEGER PRIMARY KEY, session_id INTEGER, name TEXT);")
         db.commit()
@@ -157,6 +174,50 @@ def upload_file(file: UploadFile, db = Depends(get_db)):
     # Success,
     db.close()
     return {"filename": file.filename}
+
+
+@app.post("/api/merge")
+def merge(merge_request: MergeRequest, session_id: str | None = Cookie(None), db: sqlite3.Connection = Depends(get_db)):
+    # Check if session_id is None
+    if session_id is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Session id is missing")
+
+    # Check if session exists in db
+    db_cursor = db.cursor()
+    db_cursor.execute(f"SELECT id FROM session WHERE id = {session_id};")
+    if db_cursor.fetchone() is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Session does not exist")
+
+    # Perform merge
+    result_id = merge_pdf(db, merge_request.pdf_order, int(session_id))
+
+    # Success, respond with result_id
+    db.close()
+    return {"result_id": result_id}
+
+
+@app.post("/api/merge-pagewise")
+def merge_pagewise(merge_request: MergePagewiseRequest, session_id: str | None = Cookie(None), db: sqlite3.Connection = Depends(get_db)):
+    # Check if session_id is None
+    if session_id is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Session id is missing")
+
+    # Check if session exists in db
+    db_cursor = db.cursor()
+    db_cursor.execute(f"SELECT id FROM session WHERE id = {session_id};")
+    if db_cursor.fetchone() is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Session does not exist")
+
+    # Perform merge
+    result_id = merge_pdf_pagewise(db, merge_request.pdf_order, int(session_id))
+
+    # Success, respond with result_id
+    db.close()
+    return {"result_id": result_id}
 
 
 if __name__ == "__main__":
