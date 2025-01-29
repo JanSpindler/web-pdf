@@ -1,12 +1,12 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, BackgroundTasks, Response, Cookie
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 import sqlite3
 from datetime import datetime, timedelta
 import os
 import time
 from threading import Thread, Event
 import uvicorn
-from utils import table_exists, UPLOAD_FOLDER, DB_FILE
+from utils import table_exists, UPLOAD_FOLDER, DB_FILE, RESULT_FOLDER
 from merge_pdf import merge_pdf, merge_pdf_pagewise
 from pydantic import BaseModel
 
@@ -218,6 +218,44 @@ def merge_pagewise(merge_request: MergePagewiseRequest, session_id: str | None =
     # Success, respond with result_id
     db.close()
     return {"result_id": result_id}
+
+
+@app.get("/api/result/{result_id}")
+def get_result(
+    result_id: int, 
+    session_id: str | None = Cookie(None), 
+    db: sqlite3.Connection = Depends(get_db)):
+    # Check if session_id is None
+    if session_id is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Session id is missing")
+
+    # Check if session exists in db
+    db_cursor = db.cursor()
+    db_cursor.execute(f"SELECT id FROM session WHERE id = {session_id};")
+    if db_cursor.fetchone() is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Session does not exist")
+    
+    # Check wether result belongs to given session
+    db_cursor.execute(f"SELECT session_id FROM result WHERE id = {result_id};")
+    db_result = db_cursor.fetchone()
+    if db_result is None:
+        db.close()
+        raise HTTPException(status_code=400, detail="Result does not exist")
+    result_session_id = db_result[0]
+    if result_session_id != session_id:
+        db.close()
+        raise HTTPException(status_code=400, detail="Result does not belong to session")
+    
+    # Get result file
+    result_file_path = f"{RESULT_FOLDER}/{result_id}.pdf"
+    if not os.path.exists(result_file_path):
+        db.close()
+        raise HTTPException(status_code=500, detail="Result file does not exist")
+    
+    # Success, return file
+    return FileResponse(path=result_file_path)
 
 
 if __name__ == "__main__":
